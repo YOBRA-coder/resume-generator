@@ -1,0 +1,11 @@
+export { tailorLocal, roleBullets, fillDuty } from './tailor.js';
+export { parseJob, guessCompany } from './jobParser.js';
+export { strengthenBullet, splitNotes } from './rewriter.js';
+export { detectRole, ROLES, roleById } from './roles.js';
+export { buildSummary, TONES, headlineFor } from './summary.js';
+export { buildCoverLetter } from './coverLetter.js';
+export { analyzeResume } from './ats.js';
+export { matchJob } from './matcher.js';
+export { findSkills, canonicalSkill, SKILLS } from './dictionary.js';
+export { parseResumeText } from './resumeParser.js';
+export { inventedNumbers } from './guard.js';
