@@ -16,19 +16,32 @@ export async function checkAI(force = false) {
   return value;
 }
 
-/** Calls /api/generate. Returns the sanitized result or throws an Error with a user-readable message. */
-export async function callAI({ profile, job, options }, accessCode) {
+const FRIENDLY = { rate_limited: 'AI is busy, try again in a minute.', timeout: 'AI took too long to answer.', ai_not_configured: 'AI key is not set on the server (add ANTHROPIC_API_KEY and redeploy).', unauthorized: 'This server needs the access code from Settings.' };
+const headers = (accessCode) => ({ 'content-type': 'application/json', ...(accessCode ? { 'x-access-code': accessCode } : {}) });
+
+/** Calls /api/generate. task: 'full' | 'summary' | 'motivation'. Returns the sanitized result or throws an Error whose message is the real reason. */
+export async function callAI({ profile, job, options, task = 'full' }, accessCode) {
   const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 58_000);
   try {
-    const r = await fetch('/api/generate', {
-      method: 'POST', signal: ctrl.signal,
-      headers: { 'content-type': 'application/json', ...(accessCode ? { 'x-access-code': accessCode } : {}) },
-      body: JSON.stringify({ profile, job, options }),
-    });
+    let r;
+    try {
+      r = await fetch('/api/generate', { method: 'POST', signal: ctrl.signal, headers: headers(accessCode), body: JSON.stringify({ task, profile, job, options }) });
+    } catch (e) {
+      throw new Error(e.name === 'AbortError' ? FRIENDLY.timeout : 'Could not reach the AI service (offline, or /api is not deployed).');
+    }
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.message || ({ rate_limited: 'AI is busy, try again in a minute.', timeout: 'AI took too long.', ai_not_configured: 'AI is not set up on this server.' }[j.error]) || 'AI is unavailable right now.');
+    if (!r.ok) throw new Error(j.message || FRIENDLY[j.error] || `AI request failed (${r.status}).`);
     return j.result;
   } finally { clearTimeout(t); }
+}
+
+/** Makes one tiny real request so Settings can show the exact reason the key does or doesn't work. */
+export async function probeAI(accessCode) {
+  try {
+    const r = await fetch('/api/health?probe=1', { headers: headers(accessCode), cache: 'no-store' });
+    const j = await r.json().catch(() => ({}));
+    return { ok: !!j.ok, model: j.model, message: j.message || (r.ok ? '' : `Server answered ${r.status}.`) };
+  } catch { return { ok: false, message: 'Could not reach /api/health. Offline, or the functions are not deployed.' }; }
 }
 
 /** Merge a sanitized AI result into the local (offline) result. Anything missing/invalid keeps the local version. */

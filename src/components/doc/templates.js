@@ -5,6 +5,9 @@ export const TEMPLATES = [
   { id: 'creative', name: 'Creative', note: 'Colour header band', font: 'display', accent: '#c2410c' },
   { id: 'executive', name: 'Executive', note: 'Serif with double rule', font: 'serif', accent: '#7a1f2b' },
   { id: 'compact', name: 'Compact', note: 'Dense, fits more on a page', font: 'sans', accent: '#2563eb' },
+  { id: 'classic', name: 'Classic', note: 'Traditional serif, ruled headings', font: 'serif', accent: '#374151' },
+  { id: 'bold', name: 'Bold', note: 'Large name, strong headings', font: 'display', accent: '#6d28d9' },
+  { id: 'timeline', name: 'Timeline', note: 'Accent rail down the page', font: 'sans', accent: '#0b7a68' },
 ];
 export const ACCENTS = ['#0b7a68', '#1f2a44', '#2563eb', '#6d28d9', '#c2410c', '#be123c', '#a16207', '#374151'];
 export const FONTS = { sans: "'Geist Variable', 'Segoe UI', Arial, sans-serif", serif: "'Lora', Georgia, 'Times New Roman', serif", display: "'Bricolage Grotesque Variable', 'Geist Variable', Arial, sans-serif" };

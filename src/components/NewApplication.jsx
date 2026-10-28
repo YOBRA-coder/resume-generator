@@ -5,6 +5,7 @@ import { generateApplication } from '../lib/generate.js';
 import { parseJob } from '../engine/jobParser.js';
 import { TextInput, TextArea, Icon, Busy, Seg } from './ui.jsx';
 import { TONES } from '../engine/summary.js';
+import { suggestMotivationFor } from '../lib/assist.js';
 
 export default function NewApplication() {
   const profile = useStore((s) => s.profile); const settings = useStore((s) => s.settings); const ai = useStore((s) => s.ai); const online = useStore((s) => s.online);
@@ -16,6 +17,15 @@ export default function NewApplication() {
   const useAI = settings.ai && ai.ai && online;
   const noProfile = !profile.basics.name;
 
+  const suggest = async () => {
+    setBusy('Drafting a reason');
+    try {
+      const skills = [...(parsed?.hardSkills || []).map((x) => x.name)].filter((n) => (profile.skills || []).some((k) => String(k?.name ?? k).toLowerCase() === n.toLowerCase()));
+      const mine = skills.length ? skills : (profile.skills || []).map((k) => k?.name ?? k);
+      const r = await suggestMotivationFor({ company: f.company.trim() || parsed?.companyGuess || '', jobTitle: f.jobTitle.trim() || parsed?.titleGuess || profile.targetRole || '', jobText: f.jobText, job: parsed, skills: mine, previous: f.motivation, tone: f.tone }, profile, settings);
+      set({ motivation: r.text }); toast(r.note || (r.via === 'ai' ? 'Drafted with AI. Edit it so it sounds like you.' : 'Drafted. Edit it so it sounds like you.'), { ms: 5000 });
+    } finally { setBusy(''); }
+  };
   const create = async () => {
     setBusy('Analysing the job and your background');
     try {
@@ -37,7 +47,8 @@ export default function NewApplication() {
         {parsed && (
           <div className="alert ok"><Icon name="target" /><div><b>Found in the ad:</b> {[...parsed.hardSkills, ...parsed.softSkills].slice(0, 10).map((s) => s.name).join(', ') || 'no skills detected'}{parsed.yearsRequired ? ` · ${parsed.yearsRequired}+ years asked` : ''}{parsed.mission.length ? ' · company mission detected' : ''}</div></div>
         )}
-        <TextArea label="Why this company? (one or two lines)" rows={3} value={f.motivation} onChange={(v) => set({ motivation: v })} placeholder="e.g. I use their app daily and want to help small shops get paid faster." hint="This is what makes the cover letter personal. We never invent a reason for you." />
+        <TextArea label="Why this company? (one or two lines)" rows={3} value={f.motivation} onChange={(v) => set({ motivation: v })} placeholder="e.g. I use their app daily and want to help small shops get paid faster." hint="This is what makes the cover letter personal. Write your own, or tap Suggest and edit the draft." />
+        <div><button className="btn sm ai" type="button" onClick={suggest}><Icon name="sparkles" width="15" height="15" />{f.motivation.trim() ? 'Suggest another' : 'Suggest why this company'}</button></div>
         <button className="btn ghost" style={{ alignSelf: 'flex-start' }} onClick={() => setMore(!more)}><Icon name={more ? 'chevU' : 'chevD'} width="15" height="15" />{more ? 'Fewer options' : 'More options'}</button>
         {more && <div className="stack"><TextInput label="Hiring manager (optional)" value={f.recipient} onChange={(v) => set({ recipient: v })} placeholder="e.g. Ms. Njeri Kamau" /><div className="field"><span className="label">Tone</span><Seg label="Tone" value={f.tone} onChange={(v) => set({ tone: v })} options={Object.entries(TONES)} /></div></div>}
         <div className="row spread" style={{ borderTop: '1px solid var(--line)', paddingTop: 16 }}>

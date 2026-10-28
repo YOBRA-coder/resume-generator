@@ -3,12 +3,14 @@ import { useStore } from '../store.js';
 import { Modal, Switch, Seg, Icon, TextInput } from './ui.jsx';
 import { download } from '../lib/exporters.js';
 import { TONES } from '../engine/summary.js';
+import { checkAI, probeAI } from '../lib/ai.js';
 
 export default function Settings({ onClose }) {
   const s = useStore((x) => x.settings); const set = useStore((x) => x.setSettings); const ai = useStore((x) => x.ai); const online = useStore((x) => x.online);
   const exportAll = useStore((x) => x.exportAll); const importAll = useStore((x) => x.importAll); const wipe = useStore((x) => x.wipeAll); const toast = useStore((x) => x.toast);
   const persistent = useStore((x) => x.persistent); const installEvent = useStore((x) => x.installEvent);
-  const file = useRef(null); const [confirmWipe, setConfirmWipe] = useState(false);
+  const file = useRef(null); const [confirmWipe, setConfirmWipe] = useState(false); const [probe, setProbe] = useState(null); const [testing, setTesting] = useState(false);
+  const test = async () => { setTesting(true); setProbe(null); const r = await probeAI(s.accessCode); setProbe(r); setTesting(false); checkAI(true); };
   const aiState = !online ? ['warn', 'Offline. Using the built-in engine.'] : ai.ai ? ['ai', ai.needsCode && !s.accessCode ? 'AI available. Enter the access code.' : 'AI polish is available.'] : ['', 'No AI key on the server. The built-in engine does everything offline.'];
   return (
     <Modal title="Settings" onClose={onClose}>
@@ -20,6 +22,11 @@ export default function Settings({ onClose }) {
           <span className="label">AI engine</span>
           <Switch checked={s.ai} onChange={(v) => set({ ai: v })} label="Use AI polish when available" />
           <span className={`badge ${aiState[0]}`} style={{ alignSelf: 'flex-start' }}><i />{aiState[1]}</span>
+          <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+            <button className="btn sm" onClick={test} disabled={testing || !online}>{testing ? 'Testing…' : 'Test AI connection'}</button>
+            {probe && <span className={`badge ${probe.ok ? 'ai' : 'warn'}`}><i />{probe.ok ? `Working${probe.model ? ` (${probe.model})` : ''}` : 'Not working'}</span>}
+          </div>
+          {probe && !probe.ok && <div className="alert bad"><Icon name="alert" /><div>{probe.message || 'The AI request failed.'}</div></div>}
           {ai.needsCode && <TextInput label="Access code" type="password" value={s.accessCode} onChange={(v) => set({ accessCode: v })} hint="Set by whoever hosts this app." />}
           <p className="hint">The offline engine always runs first. AI only rewrites wording, and anything containing numbers you didn’t provide is discarded.</p>
         </div>

@@ -31,11 +31,22 @@ React + Vite PWA with serverless functions, hosted on one Vercel project. **Work
 ```bash
 npm install
 npm run dev        # app + /api functions on http://localhost:5173
-npm test           # 29 tests: engine, parser, guard, API handler
+npm test           # 35 tests: engine, summary length, parser, guard, API handler
 npm run build
 ```
 
-Optional AI: copy `.env.example` to `.env` and set `ANTHROPIC_API_KEY`. Without it everything still works.
+Optional AI: copy `.env.example` to `.env` and set `ANTHROPIC_API_KEY`, then **restart `npm run dev`** (the key is read at start). Without it everything still works.
+
+**AI says unavailable?** Open Settings and press **Test AI connection**. It shows the exact reason (key rejected, no credit, model not available, rate limit). On Vercel the variable must be set for the *Production* environment and the project redeployed. `ANTHROPIC_MODEL` can override the model; the server falls back through several models automatically.
+
+## New in v3
+
+* **Rewrite summary** always gives 35–60 varied words (AI when available, otherwise offline).
+* **Suggest why this company** on New application and the Cover tab.
+* **Auto design**: template, colour and paper chosen from the role, industry and seniority; pages settled automatically.
+* Roles are topped up to 5/4/3 bullets (suggestions are flagged and never count as evidence).
+* **Fix buttons** on every failing Job-match check, plus **Fix what I can**.
+* Nine templates (added Classic, Bold, Timeline).
 
 ## Deploy (one platform: Vercel)
 
@@ -69,4 +80,3 @@ tests/               vitest
 * Scanned (image-only) PDFs can't be read; paste the text instead.
 * The offline writer is template-driven: reliable and honest, but plainer than AI polish. Add an API key for more natural phrasing.
 * Role knowledge covers about 25 job families (software, data, design, marketing, sales, finance, HR, admin, teaching, nursing, engineering, logistics, hospitality, NGO) plus a general fallback. Extend `src/engine/roles.js` and `dictionary.js`.
-# resume-generator

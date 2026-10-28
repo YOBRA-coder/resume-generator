@@ -11,45 +11,40 @@ import { Icon, Tabs, TextInput, TextArea, Seg, Switch, Modal, SaveIndicator, Bus
 import { analyzeResume } from '../engine/ats.js';
 import { parseJob } from '../engine/jobParser.js';
 import { tailorLocal } from '../engine/tailor.js';
+import { rewriteSummaryFor, suggestMotivationFor } from '../lib/assist.js';
+import { strengthenBullet } from '../engine/rewriter.js';
+import { roleBullets } from '../engine/tailor.js';
 import { detectRole } from '../engine/roles.js';
 import { TONES } from '../engine/summary.js';
 import { generateApplication } from '../lib/generate.js';
+import { countPages, fitTo } from '../lib/layout.js';
 import { resumeToDocx, coverToDocx, resumeToText, coverToText, download, fileBase } from '../lib/exporters.js';
 import { canonicalSkill } from '../engine/dictionary.js';
 import { wordCount } from '../engine/text.js';
 
 const STATUS = [['draft', 'Draft'], ['applied', 'Applied'], ['interview', 'Interview'], ['offer', 'Offer'], ['rejected', 'Rejected']];
 
-async function countPages(app, design, kind) {
-  const host = document.createElement('div'); host.style.cssText = 'position:fixed;left:-99999px;top:0;'; document.body.appendChild(host);
-  const root = createRoot(host); let n = 1;
-  try {
-    flushSync(() => root.render(<Paged mode="print" kind={kind} design={design} units={kind === 'resume' ? buildResumeUnits(app.resume, design) : buildCoverUnits(app, design)} onLayout={(l) => { n = l.pages; }} />));
-  } finally { root.unmount(); host.remove(); }
-  return n;
-}
-
 /* ================= panels ================= */
 function ContentPanel({ app, up }) {
-  const master = useStore((s) => s.profile); const settings = useStore((s) => s.settings);
+  const master = useStore((s) => s.profile); const settings = useStore((s) => s.settings); const toast = useStore((s) => s.toast); const [busySum, setBusySum] = useState(false);
   const role = useMemo(() => detectRole(app.jobTitle, app.resume.skills.join(' ')), [app.jobTitle]);
   const missing = useMemo(() => analyzeResume(app.resume, app.job, app.design).match?.missing.map((m) => m.name) || [], [app.resume, app.job]);
   const suggestions = [...new Set([...missing, ...role.skills])];
-  const rewriteSummary = () => { const r = tailorLocal(master, { company: app.company, jobTitle: app.jobTitle, jobText: app.jobText, tone: app.tone, locale: settings.locale, seed: Math.floor(Math.random() * 1e6) + 1 }); up((a) => ({ ...a, resume: { ...a.resume, summary: r.resume.summary } })); };
+  const rewriteSummary = async () => { setBusySum(true); try { const r = await rewriteSummaryFor(app, master, settings); up((a) => ({ ...a, resume: { ...a.resume, summary: r.text } })); toast(r.note || `New summary (${r.words} words)`); } finally { setBusySum(false); } };
   return (
     <>
       {app.generatedSkills && <div className="alert warn" style={{ marginBottom: 16 }}><Icon name="alert" /><span>Your profile had few skills, so we added common ones for this role. Remove any you don’t have.</span></div>}
       {app.resume.experience.some((e) => e.bullets.some((b) => b.generated)) && <div className="alert ai" style={{ marginBottom: 16 }}><Icon name="sparkles" /><span>Some bullet points are suggestions for the job title (marked in gold). Edit them to match what you actually did, and add real numbers.</span></div>}
       <ContentEditor data={app.resume} onChange={(p) => up((a) => ({ ...a, resume: { ...a.resume, ...p } }))} mode="app" suggestions={suggestions}
-        summaryAction={<button className="btn sm" onClick={rewriteSummary}><Icon name="refresh" width="15" height="15" />Rewrite</button>} />
+        summaryAction={<button className="btn sm" onClick={rewriteSummary} disabled={busySum}><Icon name="refresh" width="15" height="15" />{busySum ? 'Writing…' : 'Rewrite'}</button>} />
       <Block title="Sections" icon="list"><SectionsPanel data={app.resume} onChange={(p) => up((a) => ({ ...a, resume: { ...a.resume, ...p } }))} /></Block>
     </>
   );
 }
 
-function JobPanel({ app, up }) {
+function JobPanel({ app, up, setTab }) {
   const master = useStore((s) => s.profile); const settings = useStore((s) => s.settings); const toast = useStore((s) => s.toast);
-  const [confirm, setConfirm] = useState(false); const [busy, setBusy] = useState('');
+  const [confirm, setConfirm] = useState(false); const [busy, setBusy] = useState(''); const [dlg, setDlg] = useState(null);
   const result = useMemo(() => analyzeResume(app.resume, app.job, app.design), [app.resume, app.job, app.design]);
   const m = result.match;
   const reanalyse = () => { const job = parseJob(app.jobText, { title: app.jobTitle }); up((a) => ({ ...a, job })); toast('Job description analysed'); };
@@ -59,6 +54,40 @@ function JobPanel({ app, up }) {
     finally { setBusy(''); }
   };
   const addSkill = (name) => { up((a) => ({ ...a, resume: { ...a.resume, skills: [...new Set([...a.resume.skills, name])] } })); toast(`Added “${name}” to your skills`); };
+    const allBullets = () => app.resume.experience.flatMap((e) => e.bullets.map((b) => ({ ...b, _e: e.id })));
+  const mapBullets = (fn) => up((a) => ({ ...a, resume: { ...a.resume, experience: a.resume.experience.map((e) => ({ ...e, bullets: e.bullets.map((b) => fn(b, e)) })) } }));
+  const doFix = {
+    name: async () => { up((a) => ({ ...a, resume: { ...a.resume, basics: { ...a.resume.basics, headline: a.jobTitle || a.resume.basics.headline } } })); return 'Headline set to the job title'; },
+    summary: async () => { const r = await rewriteSummaryFor(app, master, settings); up((a) => ({ ...a, resume: { ...a.resume, summary: r.text } })); return `New summary (${r.words} words)`; },
+    verbs: async () => { mapBullets((b, e) => ({ ...b, text: strengthenBullet(b.text, { current: !!e.current, locale: settings.locale }).text })); return 'Bullets now start with action verbs'; },
+    skills: async () => {
+      const role = detectRole(app.jobTitle, app.resume.skills.join(' '));
+      const next = [...new Set([...app.resume.skills, ...role.skills])].slice(0, Math.max(8, app.resume.skills.length));
+      up((a) => ({ ...a, resume: { ...a.resume, skills: next } })); return `Added ${next.length - app.resume.skills.length} common skills for this role. Remove any you don’t have`;
+    },
+    length: async () => {
+      const words = wordCount([app.resume.summary, ...allBullets().map((b) => b.text)].join(' '));
+      if (words > 900) { const d = await fitTo(app, { ...app.design }, 2); if (d) { up((a) => ({ ...a, design: { ...d, pages: 2 } })); return 'Fitted to two pages'; } return 'Trim some bullets, it is long'; }
+      const role = detectRole(app.jobTitle, app.resume.skills.join(' '));
+      up((a) => ({ ...a, resume: { ...a.resume, experience: a.resume.experience.map((e, i) => { const want = [5, 4, 3][Math.min(i, 2)]; if (e.bullets.length >= want) return e; const extra = roleBullets({ ...e, bullets: [], notes: '' }, { role, userSkills: a.resume.skills, locale: settings.locale, seed: Date.now() % 99999 + i, target: want }).filter((x) => !e.bullets.some((b) => b.text === x.text)).slice(0, want - e.bullets.length); return { ...e, bullets: [...e.bullets, ...extra] }; }) } }));
+      return 'Added suggested duties (marked as suggestions). Edit them to match what you did';
+    },
+    photo: async () => { up((a) => ({ ...a, design: { ...a.design, showPhoto: false } })); return 'Photo turned off'; },
+  };
+  const jump = { contact: 'Add your email and phone in the Content tab', experience: 'Add a job or project in the Content tab', education: 'Add your education in the Content tab' };
+  const run = async (id) => {
+    if (id === 'metrics') return setDlg({ kind: 'metrics', edits: {} });
+    if (id === 'match') return setDlg({ kind: 'match', pick: {} });
+    if (jump[id]) { setTab('content'); return toast(jump[id]); }
+    if (!doFix[id]) return;
+    setBusy('Fixing'); try { toast(await doFix[id]()); } finally { setBusy(''); }
+  };
+  const fixAll = async () => {
+    setBusy('Fixing what can be fixed');
+    try { const fails = result.checks.filter((c) => !c.pass).map((c) => c.id).filter((id) => ['name', 'summary', 'verbs', 'skills', 'length', 'photo'].includes(id)); for (const id of fails) await doFix[id](); toast(fails.length ? `Fixed ${fails.length} check${fails.length > 1 ? 's' : ''}. Numbers and keywords need your input.` : 'Nothing to auto-fix'); } finally { setBusy(''); }
+  };
+  const noMetric = allBullets().filter((b) => !/\d/.test(b.text)).slice(0, 8);
+  const failing = result.checks.filter((c) => !c.pass);
   const col = result.score >= 75 ? 'var(--ok)' : result.score >= 50 ? 'var(--warn)' : 'var(--danger)';
   return (
     <div className="stack">
@@ -86,7 +115,9 @@ function JobPanel({ app, up }) {
             {app.job.requirements?.length > 0 && <ul style={{ margin: 0, paddingLeft: 18 }}>{app.job.requirements.slice(0, 8).map((r, i) => <li key={i}>{r}</li>)}</ul>}
           </div></details>
       )}
-      <div><span className="label">Checks</span>{result.checks.map((c) => <div key={c.id} className={`check ${c.pass ? 'pass' : 'fail'}`}><Icon name={c.pass ? 'check' : 'alert'} width="16" height="16" /><span>{c.label}{!c.pass && <span className="muted"> — {c.tip}</span>}</span></div>)}</div>
+      <div><div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}><span className="label">Checks</span>{failing.length > 0 && <button className="btn sm ai" onClick={fixAll}><Icon name="wand" width="15" height="15" />Fix what I can</button>}</div>{result.checks.map((c) => <div key={c.id} className={`check ${c.pass ? 'pass' : 'fail'}`}><Icon name={c.pass ? 'check' : 'alert'} width="16" height="16" /><span className="grow">{c.label}{!c.pass && <span className="muted"> — {c.tip}</span>}</span>{!c.pass && (doFix[c.id] || jump[c.id] || c.id === 'metrics' || c.id === 'match') && <button className="btn sm" onClick={() => run(c.id)}>{jump[c.id] ? 'Go fix' : c.id === 'metrics' || c.id === 'match' ? 'Review' : 'Fix'}</button>}</div>)}</div>
+      {dlg?.kind === 'metrics' && <Modal title="Add real numbers" onClose={() => setDlg(null)} footer={<><button className="btn" onClick={() => setDlg(null)}>Cancel</button><button className="btn primary" onClick={() => { mapBullets((b) => (dlg.edits[b.id] && dlg.edits[b.id].trim() ? { ...b, text: dlg.edits[b.id].trim(), generated: false, source: 'user' } : b)); setDlg(null); toast('Saved'); }}>Save</button></>}><p className="muted small">Edit any line to include a number that is true (people, money, time, volume). We never invent numbers.</p>{noMetric.length ? noMetric.map((b) => <TextArea key={b.id} rows={2} value={dlg.edits[b.id] ?? b.text} onChange={(v) => setDlg((d) => ({ ...d, edits: { ...d.edits, [b.id]: v } }))} />) : <p>Every bullet already has a number.</p>}</Modal>}
+      {dlg?.kind === 'match' && <Modal title="Which of these do you really have?" onClose={() => setDlg(null)} footer={<><button className="btn" onClick={() => setDlg(null)}>Cancel</button><button className="btn primary" onClick={() => { const add = (m?.missing || []).map((x) => x.name).filter((n) => dlg.pick[n]); if (add.length) up((a) => ({ ...a, resume: { ...a.resume, skills: [...new Set([...a.resume.skills, ...add])] } })); setDlg(null); toast(add.length ? `Added ${add.length} skill${add.length > 1 ? 's' : ''}` : 'Nothing added'); }}>Add selected</button></>}><p className="muted small">Tick only skills you can speak to in an interview.</p>{(m?.missing || []).map((x) => <label key={x.name} className="row" style={{ gap: 8, alignItems: 'center' }}><input type="checkbox" checked={!!dlg.pick[x.name]} onChange={(e) => setDlg((d) => ({ ...d, pick: { ...d.pick, [x.name]: e.target.checked } }))} />{x.name}{!x.required && <span className="muted small"> (nice to have)</span>}</label>)}</Modal>}
       {confirm && <Modal title="Re-tailor from your master profile?" onClose={() => setConfirm(false)} footer={<><button className="btn" onClick={() => setConfirm(false)}>Cancel</button><button className="btn primary" onClick={retailor}>Re-tailor</button></>}><p className="muted">This rewrites the resume content for this job from your master profile. Your edits to the resume text will be replaced (your design choices are kept).</p></Modal>}
     </div>
   );
@@ -102,11 +133,20 @@ function CoverPanel({ app, up }) {
     try { const { app: fresh, aiNote } = await generateApplication(master, { company: app.company, jobTitle: app.jobTitle, jobText: app.jobText, motivation: app.motivation, recipient: app.recipient, tone: app.tone }, settings, setBusy); up((a) => ({ ...a, cover: { ...fresh.cover, date: a.cover.date, greeting: a.recipient ? `Dear ${a.recipient},` : fresh.cover.greeting } })); toast(aiNote || 'New draft ready'); }
     finally { setBusy(''); }
   };
+  const suggest = async () => {
+    setBusy('Drafting a reason');
+    try {
+      const mine = (app.resume.skills || []).map((k) => k?.name ?? k).slice(0, 4);
+      const r = await suggestMotivationFor({ company: app.company, jobTitle: app.jobTitle, jobText: app.jobText, job: app.job, skills: mine, previous: app.motivation, tone: app.tone }, master, settings);
+      up({ motivation: r.text }); toast(r.note || 'Drafted. Edit it, then tap “Write new draft”.', { ms: 5000 });
+    } finally { setBusy(''); }
+  };
   const labels = ['Opening', 'Evidence', 'Fit and motivation', 'Closing'];
   return (
     <div className="stack">
       {busy && <Busy text={busy} />}
       <TextArea label="Why this company?" rows={3} value={app.motivation} onChange={(v) => up({ motivation: v })} hint="One or two honest lines. We weave it into the letter. Then tap “Write new draft”." />
+      <div><button className="btn sm ai" onClick={suggest}><Icon name="sparkles" width="15" height="15" />{app.motivation?.trim() ? 'Suggest another' : 'Suggest why this company'}</button></div>
       <div className="grid2"><TextInput label="Hiring manager" value={app.recipient} placeholder="Optional" onChange={(v) => up((a) => ({ ...a, recipient: v, cover: { ...a.cover, greeting: v ? `Dear ${v},` : 'Dear Hiring Manager,' } }))} /><TextInput label="Date" type="date" value={c.date} onChange={(v) => up((a) => ({ ...a, cover: { ...a.cover, date: v } }))} /></div>
       <div className="field"><span className="label">Tone</span><Seg label="Tone" value={app.tone} onChange={(v) => up({ tone: v })} options={Object.entries(TONES)} /></div>
       <button className="btn ai" onClick={regen}><Icon name="sparkles" />Write new draft</button>
@@ -236,7 +276,7 @@ export default function Editor({ id }) {
         </div>
         <div className="ed-left-body">
           {tab === 'content' && <ContentPanel app={app} up={up} />}
-          {tab === 'job' && <JobPanel app={app} up={up} />}
+          {tab === 'job' && <JobPanel app={app} up={up} setTab={setTab} />}
           {tab === 'cover' && <CoverPanel app={app} up={up} />}
           {tab === 'design' && <DesignPanel app={app} up={up} fit={fit} pagesNow={layout.resume} />}
           {tab === 'export' && <ExportPanel app={app} up={up} onPrint={(kind) => setPrintJob({ appId: app.id, kind })} />}

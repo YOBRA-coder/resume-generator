@@ -22,19 +22,34 @@ export function fillDuty(tpl, slots) {
   return t;
 }
 
-/** Bullets for a role: user's bullets → their rough notes → typical duties (flagged `generated`). */
-export function roleBullets(exp, { role, userSkills, locale = 'uk', seed = 1 }) {
+const words = (t) => new Set(t.toLowerCase().match(/[a-z]{4,}/g) || []);
+const similar = (a, b) => { const A = words(a), B = words(b); if (!A.size || !B.size) return false; let n = 0; for (const w of A) if (B.has(w)) n++; return n / Math.min(A.size, B.size) > 0.6; };
+
+/** Bullets for a role: user's bullets → their rough notes → typical duties (flagged `generated`), topped up to `target`. */
+export function roleBullets(exp, { role, userSkills, locale = 'uk', seed = 1, target = 4, topUp = true }) {
   const current = !!exp.current;
   const have = (exp.bullets || []).filter((b) => bulletText(b).trim());
-  if (have.length) return have.map((b) => ({ id: b.id || uid(), text: strengthenBullet(bulletText(b), { current, locale }).text, generated: !!b.generated, source: b.generated ? 'generated' : 'user' }));
-  const notes = splitNotes(exp.notes || '');
-  if (notes.length) return notes.map((n) => ({ id: uid(), text: strengthenBullet(n, { current, locale }).text, source: 'notes' }));
+  let out;
+  if (have.length) out = have.map((b) => ({ id: b.id || uid(), text: strengthenBullet(bulletText(b), { current, locale }).text, generated: !!b.generated, source: b.generated ? 'generated' : 'user' }));
+  else {
+    const notes = splitNotes(exp.notes || '');
+    out = notes.map((n) => ({ id: uid(), text: strengthenBullet(n, { current, locale }).text, source: 'notes' }));
+  }
+  if (out.length && !topUp) return out;
+  const want = out.length ? target : Math.max(target, 4);
+  if (out.length >= want) return out;
   const roleSet = new Set(role.skills.map(canonicalSkill));
   const mine = userSkills.filter((s) => roleSet.has(canonicalSkill(s)) && !/^(communication|teamwork)$/i.test(s));
   const slots = { a: mine[0], b: mine[1], c: mine[2] };
   const r = rng(seed);
   const pool = r.shuffle(role.duties).map((d) => fillDuty(d, slots)).filter(Boolean);
-  return pool.slice(0, 4).map((t) => ({ id: uid(), text: strengthenBullet(t, { current, locale }).text, generated: true, source: 'generated' }));
+  for (const t of pool) {
+    if (out.length >= want) break;
+    const text = strengthenBullet(t, { current, locale }).text;
+    if (out.some((b) => similar(b.text, text))) continue;
+    out.push({ id: uid(), text, generated: true, source: 'generated' });
+  }
+  return out;
 }
 
 const ROLE_SECTIONS_SENIOR = ['summary', 'skills', 'experience', 'projects', 'education', 'certifications', 'languages', 'awards', 'referees'];
@@ -66,7 +81,7 @@ export function tailorLocal(master, opts = {}) {
   // experience — strengthen, rank by relevance, budget by recency
   const sorted = [...master.experience].sort((a, b) => (b.current ? 1 : 0) - (a.current ? 1 : 0) || (b.start || '').localeCompare(a.start || ''));
   const experience = sorted.map((e, i) => {
-    const all = roleBullets(e, { role, userSkills: skills, locale, seed: seed + i });
+    const all = roleBullets(e, { role, userSkills: skills, locale, seed: seed + i, target: [5, 4, 3][Math.min(i, 2)], topUp: opts.topUp !== false });
     const ranked = all.map((b, idx) => ({ b, idx, s: scoreBullet(b.text, job) })).sort((x, y) => y.s - x.s || x.idx - y.idx);
     const keep = ranked.slice(0, bulletBudget(i, sorted.length, pages)).map((x) => x.b);
     return { ...e, bullets: keep, _hiddenCount: all.length - keep.length };
@@ -107,6 +122,6 @@ export function tailorLocal(master, opts = {}) {
   const analysis = analyzeResume(resume, job, {});
   const source = JSON.stringify([master, opts.motivation, years]);
   const flagged = inventedNumbers([resume.summary, ...experience.flatMap((e) => e.bullets.map((b) => b.text)), ...cover.paragraphs].join('\n'), source, [years]);
-  return { job, role: { id: role.id, label: role.label }, resume, cover, match, analysis, generatedSkills, seed, engine: 'local', flaggedNumbers: flagged };
+  return { job, role: { id: role.id, label: role.label }, resume, cover, match, analysis, generatedSkills, seed, engine: 'local', flaggedNumbers: flagged, years };
 }
 export { formatDate, findSkills };

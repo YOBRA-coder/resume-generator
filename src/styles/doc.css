@@ -84,6 +84,20 @@
 .t-compact .photo { width: 4.6em; height: 4.6em; }
 
 /* ---------- Print: only the paged documents, exact size, no browser chrome ---------- */
+/* classic / bold / timeline: single column, no tables, ATS-safe */
+.t-classic .hd { border-bottom: 2px solid #14171c; padding-bottom: .5em; margin-bottom: .2em; }
+.t-classic .hd h1 { font-size: 2em; letter-spacing: .01em; }
+.t-classic .sh { text-transform: uppercase; letter-spacing: .1em; font-size: .9em; border-bottom: 1px solid #14171c; padding-bottom: .15em; }
+.t-bold .hd h1 { font-size: 2.5em; font-weight: 800; letter-spacing: -.03em; color: var(--accent); line-height: 1; }
+.t-bold .hd .headline { font-weight: 600; font-size: 1.15em; }
+.t-bold .sh { text-transform: uppercase; letter-spacing: .12em; font-size: .92em; font-weight: 800; background: color-mix(in srgb, var(--accent) 12%, #fff); color: var(--accent); padding: .25em .6em; border-radius: .25em; }
+.t-bold .ed { font-weight: 600; color: var(--accent); }
+.t-timeline .hd { border-bottom: 1px solid #d3d8de; }
+.t-timeline .hd h1 { color: #14171c; }
+.t-timeline .sh { color: var(--accent); font-weight: 750; position: relative; padding-left: 1.1em; }
+.t-timeline .sh::before { content: ''; position: absolute; left: 0; top: .32em; width: .62em; height: .62em; border-radius: 50%; background: var(--accent); }
+.t-timeline .ed { color: var(--accent); font-weight: 600; }
+
 #print-root { display: none; }
 #print-root.on { display: block; position: fixed; left: -99999px; top: 0; }
 @media print {
